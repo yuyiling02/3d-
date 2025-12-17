@@ -1,0 +1,7 @@
+{
+  "name": "Gesture 3D Viewer",
+  "description": "A minimalist 3D model viewer with webcam-based hand gesture control for rotation and zooming.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

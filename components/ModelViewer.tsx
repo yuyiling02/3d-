@@ -1,6 +1,6 @@
 import React, { useRef, Suspense, useLayoutEffect } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { useGLTF, Environment, Center, OrbitControls } from '@react-three/drei';
+import { useGLTF, Environment, Center, OrbitControls, ContactShadows } from '@react-three/drei';
 import * as THREE from 'three';
 import { ControlRefs } from '../types';
 
@@ -23,7 +23,7 @@ const Model: React.FC<{ url: string; controlRef: React.MutableRefObject<ControlR
   const groupRef = useRef<THREE.Group>(null);
   const dragGroupRef = useRef<THREE.Group>(null);
 
-  // Auto-scale logic: Normalize model size
+  // Auto-scale and Setup
   useLayoutEffect(() => {
     scene.scale.set(1, 1, 1);
     const box = new THREE.Box3().setFromObject(scene);
@@ -32,7 +32,8 @@ const Model: React.FC<{ url: string; controlRef: React.MutableRefObject<ControlR
     const maxDim = Math.max(size.x, size.y, size.z);
     
     if (maxDim > 0 && maxDim !== Infinity) {
-        const scaleFactor = 3 / maxDim;
+        // Target size: 3.5 units for better visibility
+        const scaleFactor = 3.5 / maxDim;
         scene.scale.setScalar(scaleFactor);
     }
     
@@ -40,59 +41,63 @@ const Model: React.FC<{ url: string; controlRef: React.MutableRefObject<ControlR
       if (obj.isMesh) {
         obj.castShadow = true;
         obj.receiveShadow = true;
+        // Improve material look
+        if (obj.material) {
+          obj.material.envMapIntensity = 1.2;
+        }
       }
     });
   }, [scene, url]);
 
-  useFrame(() => {
-    // 1. Rotation and Zoom (Left Hand) - applied to the inner group
+  useFrame((state) => {
+    // 1. Rotation and Zoom (Left Hand)
     if (groupRef.current) {
       const { rotationSpeed, zoomSpeed } = controlRef.current;
-
+      
+      // Smooth rotation
       if (rotationSpeed !== 0) {
         groupRef.current.rotation.y += rotationSpeed;
       }
 
+      // Smooth zoom
       if (zoomSpeed !== 0) {
         const currentScale = groupRef.current.scale.x;
-        const newScale = Math.max(0.5, Math.min(3.0, currentScale + zoomSpeed));
-        groupRef.current.scale.set(newScale, newScale, newScale);
+        const newScale = THREE.MathUtils.lerp(currentScale, currentScale + zoomSpeed, 0.2);
+        const clampedScale = Math.max(0.4, Math.min(4.0, newScale));
+        groupRef.current.scale.set(clampedScale, clampedScale, clampedScale);
+      }
+      
+      // Gentle idle animation if no input
+      if (rotationSpeed === 0 && !controlRef.current.isDragging) {
+        groupRef.current.rotation.y += Math.sin(state.clock.elapsedTime * 0.5) * 0.001;
       }
     }
 
-    // 2. Position Dragging (Right Hand) - applied to the outer wrapper group
-    if (dragGroupRef.current && controlRef.current.isDragging && controlRef.current.panPosition) {
-       // Smoothly interpolate current position to target position
-       const target = controlRef.current.panPosition;
+    // 2. Position Dragging (Right Hand)
+    if (dragGroupRef.current) {
+       const { isDragging, panPosition } = controlRef.current;
        
-       // Lerp factor (0.1 = smooth, 1.0 = instant)
-       dragGroupRef.current.position.x += (target.x - dragGroupRef.current.position.x) * 0.1;
-       // We add an offset of -1 to Y because our base "center" is shifted down
-       // But wait, the previous code had position={[0, -1, 0]} on the group. 
-       // We should apply the drag offset relative to that or override it.
-       // Let's treat panPosition.y as an offset from the center.
+       // Base vertical offset: -1.2 to keep it grounded and upper body centered
+       const basePosition = new THREE.Vector3(0, -1.2, 0);
        
-       // target.y is calculated where 0 is center screen. 
-       // We want the base position to be -1, so we add target.y to -1.
-       const targetY = -1 + target.y;
-       dragGroupRef.current.position.y += (targetY - dragGroupRef.current.position.y) * 0.1;
-    } else if (dragGroupRef.current && !controlRef.current.isDragging) {
-        // Optional: Return to center when not dragging? 
-        // Or just stay where left off? The prompt says "drag", implying it stays.
-        // But to prevent it getting lost, let's slowly drift back to center [-1 Y] if user isn't holding it?
-        // No, standard drag interaction usually leaves object where it is.
-        // But if the hand disappears, maybe we want it to reset?
-        // Let's keep it simple: It stays where it was left.
+       if (isDragging && panPosition) {
+          const targetX = panPosition.x;
+          const targetY = -1.2 + panPosition.y;
+          
+          dragGroupRef.current.position.x += (targetX - dragGroupRef.current.position.x) * 0.15;
+          dragGroupRef.current.position.y += (targetY - dragGroupRef.current.position.y) * 0.15;
+       } else {
+          // Slowly return toward horizontal center but keep vertical offset
+          dragGroupRef.current.position.x *= 0.95;
+          dragGroupRef.current.position.y += (-1.2 - dragGroupRef.current.position.y) * 0.05;
+       }
     }
   });
 
   return (
-    // Outer group handles Position (Right Hand)
-    // Initial position is [0, -1, 0] to center the body, but this is modified by logic
-    <group ref={dragGroupRef} position={[0, -1, 0]}>
-      {/* Inner group handles Rotation and Scale (Left Hand) */}
+    <group ref={dragGroupRef} position={[0, -1.2, 0]}>
       <group ref={groupRef}>
-        <Center>
+        <Center top>
           <primitive object={scene} />
         </Center>
       </group>
@@ -100,29 +105,38 @@ const Model: React.FC<{ url: string; controlRef: React.MutableRefObject<ControlR
   );
 };
 
-const LoadingSpinner = () => (
-  <mesh visible position={[0, 0, 0]} rotation={[0, 0, 0]}>
-    <sphereGeometry args={[1, 16, 16]} />
-    <meshStandardMaterial color="#cbd5e1" wireframe transparent opacity={0.3} />
-  </mesh>
-);
-
 const ModelViewer: React.FC<ModelViewerProps> = ({ modelUrl, controlRef }) => {
   return (
-    <div className="w-full h-full bg-gradient-to-b from-gray-50 to-gray-200">
-      <Canvas shadows dpr={[1, 2]} camera={{ position: [0, 0, 5], fov: 45 }}>
-        <Suspense fallback={<LoadingSpinner />}>
-          <ambientLight intensity={0.5} />
-          <spotLight position={[10, 10, 10]} angle={0.15} penumbra={1} intensity={1} castShadow />
-          <Environment preset="city" />
+    <div className="w-full h-full bg-[#fcfcfd]">
+      <Canvas 
+        shadows 
+        dpr={[1, 2]} 
+        camera={{ position: [0, 0, 6], fov: 40 }}
+        gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping }}
+      >
+        <Suspense fallback={null}>
+          <ambientLight intensity={0.6} />
+          <spotLight position={[10, 10, 10]} angle={0.15} penumbra={1} intensity={1.5} castShadow />
+          <pointLight position={[-10, -10, -10]} intensity={0.5} />
+          
+          <Environment preset="studio" blur={0.8} />
 
           <Model url={modelUrl} controlRef={controlRef} />
           
+          <ContactShadows 
+            position={[0, -1.2, 0]} 
+            opacity={0.4} 
+            scale={10} 
+            blur={2.5} 
+            far={1.5} 
+          />
+          
           <OrbitControls 
             makeDefault 
-            enablePan={false} 
+            enablePan={false}
+            enableZoom={true}
             minPolarAngle={Math.PI / 2.5} 
-            maxPolarAngle={Math.PI / 1.8}
+            maxPolarAngle={Math.PI / 1.7}
           />
         </Suspense>
       </Canvas>

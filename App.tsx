@@ -1,10 +1,12 @@
+
 import React, { useState, useRef, useCallback } from 'react';
 import { GoogleGenAI } from "@google/genai";
 import { GestureType, MoveDirection, ControlRefs } from './types';
 import { Badge, ProcessingOverlay } from './components/UIComponents';
 import HandController from './components/HandController';
 import ModelViewer from './components/ModelViewer';
-import { Upload, Sparkles, Box, Atom, Dna, Calculator, ChevronDown, Mic, MessageSquare } from 'lucide-react';
+import VoiceController from './components/VoiceController';
+import { Upload, Sparkles, Box, Atom, Dna, Calculator, ChevronDown, MessageSquare } from 'lucide-react';
 
 const RECONSTRUCTION_STEPS = [
   "正在提取教具视觉特征...",
@@ -24,7 +26,7 @@ const App: React.FC = () => {
   const [currentStep, setCurrentStep] = useState(0);
   const [aiAnalysis, setAiAnalysis] = useState('等待指令中...');
   
-  // Hand state
+  // Hand/Voice state
   const [gestureStatus, setGestureStatus] = useState<GestureType>(GestureType.NONE);
   const [directionStatus, setDirectionStatus] = useState<MoveDirection>(MoveDirection.CENTER);
   const [isDragging, setIsDragging] = useState(false);
@@ -130,7 +132,7 @@ const App: React.FC = () => {
           </div>
           <div className="flex flex-col">
             <span className="text-xl font-black text-gray-700 tracking-tight">慧视课堂</span>
-            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest -mt-1">Future Interactive Lab</span>
+            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest -mt-1">AI 沉浸式教学系统</span>
           </div>
         </div>
         
@@ -143,8 +145,8 @@ const App: React.FC = () => {
               disabled={isProcessing}
               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
             />
-            <button className="px-6 py-2 rounded-full glass-panel text-gray-600 hover:bg-white flex items-center transition-all hover:scale-105 active:scale-95">
-              <Sparkles className="mr-2 text-[#86e3ce]" size={18} /> 上传图片重建
+            <button className="px-6 py-2 rounded-full glass-panel text-gray-600 hover:bg-white flex items-center transition-all hover:scale-105 active:scale-95 shadow-sm">
+              <Sparkles className="mr-2 text-[#86e3ce]" size={18} /> 图片转 3D
             </button>
           </div>
 
@@ -171,16 +173,16 @@ const App: React.FC = () => {
         {/* 侧边栏 */}
         <aside className="w-72 glass-panel rounded-[32px] p-6 flex flex-col space-y-8 animate-in slide-in-from-left-8 duration-700">
           <div>
-            <h3 className="font-black text-xs text-gray-400 uppercase tracking-[0.2em] mb-4 border-l-4 border-[#86e3ce] pl-3">学科教具库</h3>
+            <h3 className="font-black text-xs text-gray-400 uppercase tracking-[0.2em] mb-4 border-l-4 border-[#86e3ce] pl-3">学科资源库</h3>
             <div className="space-y-1">
               <div onClick={() => loadDemoModel("https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/DamagedHelmet/glTF-Binary/DamagedHelmet.glb", "原子结构模型")} className="sidebar-item p-3 rounded-2xl flex items-center text-sm font-bold text-gray-600">
-                <Atom className="mr-3 text-blue-400" size={18} /> 物理 & 化学
+                <Atom className="mr-3 text-blue-400" size={18} /> 物理化学模型
               </div>
               <div className="sidebar-item p-3 rounded-2xl flex items-center text-sm font-bold text-gray-600 opacity-60">
-                <Dna className="mr-3 text-green-400" size={18} /> 生物工程
+                <Dna className="mr-3 text-green-400" size={18} /> 生物教具展示
               </div>
               <div className="sidebar-item p-3 rounded-2xl flex items-center text-sm font-bold text-gray-600 opacity-60">
-                <Calculator className="mr-3 text-orange-400" size={18} /> 几何数学
+                <Calculator className="mr-3 text-orange-400" size={18} /> 空间几何结构
               </div>
               <div className="flex items-center justify-center pt-2 text-gray-300">
                 <ChevronDown size={14} />
@@ -189,18 +191,18 @@ const App: React.FC = () => {
           </div>
 
           <div>
-            <h3 className="font-black text-xs text-gray-400 uppercase tracking-[0.2em] mb-4 border-l-4 border-pink-300 pl-3">交互设置</h3>
+            <h3 className="font-black text-xs text-gray-400 uppercase tracking-[0.2em] mb-4 border-l-4 border-pink-300 pl-3">交互智能控制</h3>
             <div className="space-y-4">
               <div className="p-4 rounded-2xl bg-white/40 border border-white/50">
-                <p className="text-[10px] font-black text-slate-400 uppercase mb-2">手势绑定</p>
+                <p className="text-[10px] font-black text-slate-400 uppercase mb-2">交互绑定</p>
                 <div className="flex flex-col gap-2">
                    <div className="flex justify-between items-center text-xs">
-                     <span className="font-bold">左手</span>
+                     <span className="font-bold">手势</span>
                      <span className="text-[#86e3ce]">旋转 + 缩放</span>
                    </div>
                    <div className="flex justify-between items-center text-xs">
-                     <span className="font-bold">右手</span>
-                     <span className="text-pink-400">组件拆解 (BETA)</span>
+                     <span className="font-bold">语音</span>
+                     <span className="text-pink-400">指令识别 (Gemini)</span>
                    </div>
                 </div>
               </div>
@@ -212,18 +214,18 @@ const App: React.FC = () => {
                     : 'bg-emerald-50 border-emerald-100 text-emerald-600'
                 }`}
               >
-                {cameraActive ? '停用动势捕捉' : '开启手势互动'}
+                {cameraActive ? '停用摄像头' : '启用手势捕捉'}
               </button>
             </div>
           </div>
 
           <div className="mt-auto">
-            <div className="bg-blue-50/50 p-4 rounded-2xl border border-blue-100/50">
+            <div className="bg-blue-50/50 p-4 rounded-2xl border border-blue-100/50 relative overflow-hidden">
               <div className="flex items-center gap-2 mb-2">
                 <MessageSquare size={14} className="text-blue-400" />
-                <p className="text-[10px] text-blue-400 font-bold uppercase">AI 助手</p>
+                <p className="text-[10px] text-blue-400 font-bold uppercase">助教日志</p>
               </div>
-              <p className="text-xs text-gray-600 leading-relaxed font-medium italic">
+              <p className="text-xs text-gray-600 leading-relaxed font-medium italic min-h-[3em]">
                 "{aiAnalysis}"
               </p>
             </div>
@@ -240,10 +242,18 @@ const App: React.FC = () => {
             />
           )}
 
-          <div className="absolute top-6 right-6 flex gap-2 z-40 opacity-0 group-hover:opacity-100 transition-opacity">
+          {/* 语音智控按钮 */}
+          <div className="absolute bottom-6 left-6 z-50">
+            <VoiceController 
+              controlRef={controlRef} 
+              onStatusChange={(msg) => setAiAnalysis(msg)} 
+            />
+          </div>
+
+          <div className="absolute top-6 right-6 flex gap-2 z-40">
             <div className={`px-4 py-2 rounded-xl bg-white/80 backdrop-blur-md text-[10px] font-bold shadow-sm flex items-center gap-2 ${cameraActive ? 'text-emerald-500' : 'text-gray-400'}`}>
               <div className={`w-1.5 h-1.5 rounded-full ${cameraActive ? 'bg-emerald-500 animate-pulse' : 'bg-gray-300'}`}></div>
-              {cameraActive ? '视觉追踪中' : '手势未启用'}
+              {cameraActive ? 'AI 动势追踪' : '手势已关闭'}
             </div>
           </div>
 
@@ -258,42 +268,45 @@ const App: React.FC = () => {
                 </div>
               </div>
               <div className="text-center px-8">
-                <h2 className="text-2xl font-black text-gray-700 mb-2">准备好进入 3D 课堂了吗？</h2>
+                <h2 className="text-2xl font-black text-gray-700 mb-2">欢迎来到 3D AI 实验室</h2>
                 <p className="text-gray-400 text-sm font-medium max-w-[320px] leading-relaxed">
-                  点击上方“上传图片”按钮，AI 将立即为您<br/>构建可交互的高精度教学模型。
+                  您可以尝试说“请放大模型”或使用手势<br/>来交互探索微观世界的奥秘。
                 </p>
               </div>
             </div>
           )}
 
-          {/* 手势统计浮窗 */}
+          {/* 状态浮窗 */}
           {cameraActive && (
-            <div className="absolute top-6 left-1/2 -translate-x-1/2 z-40 flex gap-1.5 p-1.5 bg-white/80 backdrop-blur-md rounded-full border border-white shadow-sm transition-all">
-                <Badge active={gestureStatus === GestureType.OPEN_PALM} label="放大" color="blue" />
-                <Badge active={gestureStatus === GestureType.CLOSED_FIST} label="缩小" color="blue" />
-                <Badge active={directionStatus !== MoveDirection.CENTER} label="旋转中" color="emerald" />
+            <div className="absolute top-6 left-1/2 -translate-x-1/2 z-40 flex gap-1.5 p-1.5 bg-white/80 backdrop-blur-md rounded-full border border-white shadow-sm">
+                <Badge active={gestureStatus === GestureType.OPEN_PALM || controlRef.current.zoomSpeed > 0} label="放大" color="blue" />
+                <Badge active={gestureStatus === GestureType.CLOSED_FIST || controlRef.current.zoomSpeed < 0} label="缩小" color="blue" />
+                <Badge active={directionStatus !== MoveDirection.CENTER || controlRef.current.rotationSpeed !== 0} label="旋转中" color="emerald" />
                 <Badge active={isDragging} label="抓取模型" color="orange" />
             </div>
           )}
 
-          {/* 摄像头预览区 - 适配课堂风格 */}
+          {/* 摄像头预览区 */}
           {cameraActive && (
-            <div className="absolute bottom-6 right-6 w-56 h-40 rounded-3xl border-4 border-white shadow-2xl overflow-hidden bg-black z-30">
+            <div className="absolute bottom-6 right-6 w-56 h-40 rounded-3xl border-4 border-white shadow-2xl overflow-hidden bg-black z-30 transition-all hover:scale-105">
                <HandController controlRef={controlRef} onStateChange={handleGestureUpdate} />
                <div className="absolute top-3 left-3 flex items-center gap-2">
-                 <div className="bg-red-500 w-2 h-2 rounded-full animate-pulse"></div>
-                 <span className="text-[8px] font-black text-white/50 uppercase tracking-widest">Live Preview</span>
+                 <div className="bg-[#86e3ce] w-2 h-2 rounded-full animate-pulse shadow-[0_0_8px_#86e3ce]"></div>
+                 <span className="text-[8px] font-black text-white/70 uppercase tracking-widest">Vision Sensor</span>
                </div>
             </div>
           )}
         </section>
       </main>
 
-      <footer className="h-8 px-10 flex items-center justify-between text-[10px] text-gray-400 uppercase tracking-widest font-bold">
-        <span>© 2025 慧视课堂 AI 教研室</span>
+      <footer className="h-8 px-10 flex items-center justify-between text-[10px] text-gray-400 uppercase tracking-widest font-bold bg-white/30 backdrop-blur-sm">
+        <span>© 2025 慧视课堂 | 教育 AI 实验室</span>
         <div className="flex items-center gap-4">
-           <span className="flex items-center gap-1"><Mic size={10} /> 语音控制待命</span>
-           <span>v2.5.0-STABLE</span>
+           <span className="flex items-center gap-1 text-[#86e3ce]">
+              <div className="w-1 h-1 bg-[#86e3ce] rounded-full animate-ping"></div>
+              Gemini Live API 已接入
+           </span>
+           <span>v2.6.0-VOICE</span>
         </div>
       </footer>
     </div>

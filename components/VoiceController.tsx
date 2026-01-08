@@ -45,7 +45,7 @@ const VoiceController: React.FC<VoiceControllerProps> = ({ controlRef, onStatusC
       audioContextRef.current = outputAudioContext;
 
       const sessionPromise = ai.live.connect({
-        model: 'gemini-2.5-flash-native-audio-preview-09-2025',
+        model: 'gemini-2.5-flash-native-audio-preview-12-2025',
         config: {
           responseModalities: [Modality.AUDIO],
           systemInstruction: '你是一个专业的3D课堂助教。用户会通过语音要求你操作模型。你可以通过调用函数来：zoom_in(放大)、zoom_out(缩小)、rotate(开始旋转)、stop(停止所有动作)。回复要简洁且亲切，比如“好的，正在为您放大”。',
@@ -102,10 +102,10 @@ const VoiceController: React.FC<VoiceControllerProps> = ({ controlRef, onStatusC
                 let result = "ok";
                 if (fc.name === 'zoom_in') controlRef.current.zoomSpeed = 0.015;
                 if (fc.name === 'zoom_out') controlRef.current.zoomSpeed = -0.015;
-                if (fc.name === 'rotate') controlRef.current.rotationSpeed = 0.02;
+                if (fc.name === 'rotate') controlRef.current.rotationVelocity = { x: 0, y: 0.02 };
                 if (fc.name === 'stop') {
                   controlRef.current.zoomSpeed = 0;
-                  controlRef.current.rotationSpeed = 0;
+                  controlRef.current.rotationVelocity = { x: 0, y: 0 };
                 }
                 
                 sessionPromise.then(s => s.sendToolResponse({

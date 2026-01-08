@@ -1,3 +1,4 @@
+
 import React, { useEffect, useRef, useState } from 'react';
 import { FilesetResolver, HandLandmarker, DrawingUtils } from '@mediapipe/tasks-vision';
 import { ControlRefs, GestureType, MoveDirection } from '../types';
@@ -7,6 +8,9 @@ interface HandControllerProps {
   onStateChange: (gesture: GestureType, direction: MoveDirection, isDragging: boolean) => void;
 }
 
+// Simple Low-Pass Filter for smoothing coordinates
+const lerp = (start: number, end: number, factor: number) => start + (end - start) * factor;
+
 const HandController: React.FC<HandControllerProps> = ({ controlRef, onStateChange }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -15,10 +19,37 @@ const HandController: React.FC<HandControllerProps> = ({ controlRef, onStateChan
   const handLandmarkerRef = useRef<HandLandmarker | null>(null);
   const requestRef = useRef<number>(0);
 
+  // Keep latest callback to avoid stale closures in RAF loop
+  const onStateChangeRef = useRef(onStateChange);
+  useEffect(() => {
+    onStateChangeRef.current = onStateChange;
+  }, [onStateChange]);
+
+  // Smoothing refs
+  const smoothRightPinchRef = useRef({ x: 0.5, y: 0.5 });
+  const smoothLeftFingerCenterRef = useRef({ x: 0.5, y: 0.5 });
+  
+  // Previous contact state for hysteresis
+  const wasContactingRef = useRef(false);
+
+  // Store previous position for Delta calculation (Rotation)
+  const prevLeftPosRef = useRef<{x: number, y: number} | null>(null);
+
   // Constants
-  const ROTATION_THRESHOLD_LEFT = 0.3;
-  const ROTATION_THRESHOLD_RIGHT = 0.7;
   const PINCH_THRESHOLD = 0.05;
+  const FINGER_CONTACT_THRESHOLD = 0.05; 
+  const CONTACT_THRESHOLD = 0.12; 
+  
+  // INCREASED SENSITIVITY: 0.15 -> 0.35
+  const ZOOM_SENSITIVITY = 0.35;
+  
+  // Adjusted for better range of motion
+  const DRAG_SCALE_X = 7.0; 
+  const DRAG_SCALE_Y = 5.5; 
+  const ROTATION_SENSITIVITY = 6.0; 
+
+  const SMOOTHING_FACTOR_ROTATION = 0.4; 
+  const ROTATION_DEADZONE = 0.002; 
 
   useEffect(() => {
     let mounted = true;
@@ -77,6 +108,20 @@ const HandController: React.FC<HandControllerProps> = ({ controlRef, onStateChan
     }
   };
 
+  const isFingerExtended = (landmarks: any[], tipIdx: number, pipIdx: number) => {
+    return landmarks[tipIdx].y < landmarks[pipIdx].y;
+  };
+
+  const getDistance = (p1: any, p2: any) => {
+    return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
+  };
+
+  const getPinchDistance = (landmarks: any[]) => {
+    const thumbTip = landmarks[4];
+    const indexTip = landmarks[8];
+    return getDistance(thumbTip, indexTip);
+  };
+
   const predictWebcam = () => {
     if (!videoRef.current || !handLandmarkerRef.current || !canvasRef.current) return;
 
@@ -90,7 +135,9 @@ const HandController: React.FC<HandControllerProps> = ({ controlRef, onStateChan
       ctx.scale(-1, 1);
       ctx.translate(-canvasRef.current.width, 0);
       
-      let newRotSpeed = 0;
+      // Default States
+      let rotVelX = 0; 
+      let rotVelY = 0; 
       let newZoomSpeed = 0;
       let newDirection = MoveDirection.CENTER;
       let newGesture = GestureType.NONE;
@@ -99,92 +146,154 @@ const HandController: React.FC<HandControllerProps> = ({ controlRef, onStateChan
       if (result.landmarks && result.landmarks.length > 0) {
         const drawingUtils = new DrawingUtils(ctx);
         
+        let leftHandLandmarks: any[] | null = null;
+        let rightHandLandmarks: any[] | null = null;
+
+        // 1. Identify Hands & Visuals
         for (let i = 0; i < result.landmarks.length; i++) {
           const landmarks = result.landmarks[i];
-          const handedness = result.handedness[i][0].categoryName; 
+          const handedness = result.handedness[i][0].categoryName;
+          
+          if (handedness === "Left") leftHandLandmarks = landmarks;
+          if (handedness === "Right") rightHandLandmarks = landmarks;
 
           drawingUtils.drawConnectors(landmarks, HandLandmarker.HAND_CONNECTIONS, {
-            color: handedness === "Left" ? "#86e3ce" : "#ffddca", 
+            color: handedness === "Right" ? "#86e3ce" : "#ffddca", 
             lineWidth: 3
           });
           drawingUtils.drawLandmarks(landmarks, { 
-            color: "#ffffff", 
-            lineWidth: 1, 
-            radius: 2 
+            color: "#ffffff", lineWidth: 1, radius: 2 
           });
+        }
 
-          if (handedness === "Left") {
-            const wristX = landmarks[0].x;
-            if (wristX < ROTATION_THRESHOLD_LEFT) {
-                newDirection = MoveDirection.LEFT;
-                newRotSpeed = -0.015; 
-            } else if (wristX > ROTATION_THRESHOLD_RIGHT) {
-                newDirection = MoveDirection.RIGHT;
-                newRotSpeed = 0.015;
+        // 2. DUAL HAND LOGIC: Contact Detection with Hysteresis
+        let isContacting = false;
+        if (leftHandLandmarks && rightHandLandmarks) {
+           const leftWrist = leftHandLandmarks[0];
+           const rightWrist = rightHandLandmarks[0];
+           const dist = getDistance(leftWrist, rightWrist);
+           
+           // Hysteresis: Require larger distance to exit contact state than to enter it
+           // This prevents flickering when hands are near the threshold
+           const threshold = wasContactingRef.current ? CONTACT_THRESHOLD * 1.3 : CONTACT_THRESHOLD;
+           
+           if (dist < threshold) {
+             newGesture = GestureType.DUAL_HAND_CONTACT;
+             isContacting = true;
+           }
+        }
+        wasContactingRef.current = isContacting;
+
+        // 3. INDIVIDUAL HAND LOGIC (Only if not contacting)
+        if (!isContacting) {
+            
+            // --- RIGHT HAND: Dragging (Pinch) ---
+            if (rightHandLandmarks) {
+                const pinchDist = getPinchDistance(rightHandLandmarks);
+                
+                if (pinchDist < PINCH_THRESHOLD) {
+                    isDragging = true;
+                    newGesture = GestureType.RIGHT_PINCH_DRAG;
+                    
+                    const thumbTip = rightHandLandmarks[4];
+                    const indexTip = rightHandLandmarks[8];
+                    // Raw pinch center
+                    const rawX = (thumbTip.x + indexTip.x) / 2;
+                    const rawY = (thumbTip.y + indexTip.y) / 2;
+                    
+                    // --- OPTIMIZED ADAPTIVE SMOOTHING ALGORITHM ---
+                    const dx = rawX - smoothRightPinchRef.current.x;
+                    const dy = rawY - smoothRightPinchRef.current.y;
+                    const movementDelta = Math.sqrt(dx * dx + dy * dy);
+
+                    // Refined curve: 
+                    // Very small movements (< 0.005) -> Low factor (~0.1) -> High stability (Sticky)
+                    // Fast movements -> High factor (~0.8) -> High responsiveness (Follow)
+                    // Lowered multiplier from 25 to 15 to reduce jittery transitions
+                    const adaptiveFactor = Math.min(0.85, Math.max(0.1, movementDelta * 15));
+
+                    smoothRightPinchRef.current.x = lerp(smoothRightPinchRef.current.x, rawX, adaptiveFactor);
+                    smoothRightPinchRef.current.y = lerp(smoothRightPinchRef.current.y, rawY, adaptiveFactor);
+
+                    const targetX = (0.5 - smoothRightPinchRef.current.x) * DRAG_SCALE_X; 
+                    const targetY = (0.5 - smoothRightPinchRef.current.y) * DRAG_SCALE_Y;
+                    
+                    controlRef.current.panPosition = { x: targetX, y: targetY };
+                } else {
+                   // If released, soft reset the tracking ref to the wrist or current position
+                   // so it doesn't "jump" when re-pinching
+                   const wrist = rightHandLandmarks[0];
+                   // Keep the ref close to current hand position but don't update controlRef
+                   smoothRightPinchRef.current = { x: wrist.x, y: wrist.y };
+                }
             }
 
-            if (isFist(landmarks)) {
-                newGesture = GestureType.CLOSED_FIST;
-                newZoomSpeed = -0.01;
-            } else if (isOpenPalm(landmarks)) {
-                newGesture = GestureType.OPEN_PALM;
-                newZoomSpeed = 0.01;
-            }
-          }
+            // --- LEFT HAND: Rotate (Index+Middle) OR Zoom (Open/Fist) ---
+            if (leftHandLandmarks) {
+                const indexTip = leftHandLandmarks[8];
+                const middleTip = leftHandLandmarks[12];
+                const fingersDist = getDistance(indexTip, middleTip);
 
-          if (handedness === "Right") {
-            const thumbTip = landmarks[4];
-            const indexTip = landmarks[8];
-            const distance = Math.sqrt(
-                Math.pow(thumbTip.x - indexTip.x, 2) + 
-                Math.pow(thumbTip.y - indexTip.y, 2)
-            );
+                const isIndexUp = isFingerExtended(leftHandLandmarks, 8, 6);
+                const isMiddleUp = isFingerExtended(leftHandLandmarks, 12, 10);
+                const isRingUp = isFingerExtended(leftHandLandmarks, 16, 14);
+                const isPinkyUp = isFingerExtended(leftHandLandmarks, 20, 18);
 
-            if (distance < PINCH_THRESHOLD) {
-                isDragging = true;
-                const pinchX = (thumbTip.x + indexTip.x) / 2;
-                const pinchY = (thumbTip.y + indexTip.y) / 2;
-                const viewScaleX = 6;
-                const viewScaleY = 4;
-                const targetX = (0.5 - pinchX) * viewScaleX; 
-                const targetY = (0.5 - pinchY) * viewScaleY;
-                controlRef.current.panPosition = { x: targetX, y: targetY };
+                const rawFingerCenterX = (indexTip.x + middleTip.x) / 2;
+                const rawFingerCenterY = (indexTip.y + middleTip.y) / 2;
+
+                smoothLeftFingerCenterRef.current.x = lerp(smoothLeftFingerCenterRef.current.x, rawFingerCenterX, SMOOTHING_FACTOR_ROTATION);
+                smoothLeftFingerCenterRef.current.y = lerp(smoothLeftFingerCenterRef.current.y, rawFingerCenterY, SMOOTHING_FACTOR_ROTATION);
+
+                // 1. ROTATE: Index + Middle Fingers Merged (Touching)
+                if (fingersDist < FINGER_CONTACT_THRESHOLD && isIndexUp && isMiddleUp) {
+                    newGesture = GestureType.LEFT_TWO_FINGER_ROTATE;
+                    
+                    if (prevLeftPosRef.current) {
+                        // Calculate Delta (Movement)
+                        const deltaX = smoothLeftFingerCenterRef.current.x - prevLeftPosRef.current.x;
+                        const deltaY = smoothLeftFingerCenterRef.current.y - prevLeftPosRef.current.y;
+
+                        // Deadzone check
+                        if (Math.abs(deltaX) > ROTATION_DEADZONE || Math.abs(deltaY) > ROTATION_DEADZONE) {
+                             // Invert X for mirror effect
+                             rotVelY = -deltaX * ROTATION_SENSITIVITY; 
+                             rotVelX = deltaY * ROTATION_SENSITIVITY;
+                        }
+                    }
+                    
+                    // Update previous position
+                    prevLeftPosRef.current = { ...smoothLeftFingerCenterRef.current };
+                } else {
+                    prevLeftPosRef.current = null;
+                    
+                    // 2. ZOOM IN: Open Palm (Check all fingers for reliability)
+                    if (isIndexUp && isMiddleUp && isRingUp && isPinkyUp && fingersDist >= FINGER_CONTACT_THRESHOLD) {
+                        newGesture = GestureType.ZOOM_IN_PALM;
+                        newZoomSpeed = ZOOM_SENSITIVITY;
+                    }
+                    // 3. ZOOM OUT: Fist (Check if fingers are folded)
+                    else if (!isIndexUp && !isMiddleUp && !isRingUp && !isPinkyUp) {
+                        newGesture = GestureType.ZOOM_OUT_FIST;
+                        newZoomSpeed = -ZOOM_SENSITIVITY;
+                    }
+                }
             }
-          }
         }
       }
 
-      controlRef.current.rotationSpeed = newRotSpeed;
+      controlRef.current.rotationVelocity = { x: rotVelX, y: rotVelY };
       controlRef.current.zoomSpeed = newZoomSpeed;
       controlRef.current.isDragging = isDragging;
-      onStateChange(newGesture, newDirection, isDragging);
+      
+      // Use ref to call the latest callback
+      if (onStateChangeRef.current) {
+        onStateChangeRef.current(newGesture, newDirection, isDragging);
+      }
+      
       ctx.restore();
     }
     requestRef.current = requestAnimationFrame(predictWebcam);
-  };
-
-  const isFist = (landmarks: any[]) => {
-      const wrist = landmarks[0];
-      const tips = [8, 12, 16, 20];
-      let totalDist = 0;
-      tips.forEach(idx => {
-          totalDist += Math.sqrt(Math.pow(landmarks[idx].x - wrist.x, 2) + Math.pow(landmarks[idx].y - wrist.y, 2));
-      });
-      const avgDist = totalDist / 4;
-      const handSize = Math.sqrt(Math.pow(landmarks[5].x - wrist.x, 2) + Math.pow(landmarks[5].y - wrist.y, 2));
-      return (avgDist / handSize) < 0.9;
-  };
-
-  const isOpenPalm = (landmarks: any[]) => {
-      const wrist = landmarks[0];
-      const tips = [8, 12, 16, 20];
-      let totalDist = 0;
-      tips.forEach(idx => {
-          totalDist += Math.sqrt(Math.pow(landmarks[idx].x - wrist.x, 2) + Math.pow(landmarks[idx].y - wrist.y, 2));
-      });
-      const avgDist = totalDist / 4;
-      const handSize = Math.sqrt(Math.pow(landmarks[5].x - wrist.x, 2) + Math.pow(landmarks[5].y - wrist.y, 2));
-      return (avgDist / handSize) > 1.4;
   };
 
   if (error) return <div className="absolute inset-0 flex items-center justify-center bg-red-50 text-red-400 text-[10px] font-black">{error}</div>;
@@ -193,7 +302,7 @@ const HandController: React.FC<HandControllerProps> = ({ controlRef, onStateChan
     <div className="w-full h-full relative">
       {loading && (
         <div className="absolute inset-0 flex items-center justify-center z-30 bg-gray-900 text-white text-[10px] font-bold uppercase tracking-widest">
-          Initializing AI...
+          AI Vision Init...
         </div>
       )}
       <video

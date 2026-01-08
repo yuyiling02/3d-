@@ -1,3 +1,4 @@
+
 import React, { useRef, Suspense, useLayoutEffect } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { useGLTF, Environment, Center, OrbitControls, ContactShadows } from '@react-three/drei';
@@ -8,6 +9,11 @@ import { ControlRefs } from '../types';
 declare global {
   namespace JSX {
     interface IntrinsicElements {
+      group: any;
+      primitive: any;
+      ambientLight: any;
+      spotLight: any;
+      pointLight: any;
       [elemName: string]: any;
     }
   }
@@ -22,6 +28,9 @@ const Model: React.FC<{ url: string; controlRef: React.MutableRefObject<ControlR
   const { scene } = useGLTF(url);
   const groupRef = useRef<THREE.Group>(null);
   const dragGroupRef = useRef<THREE.Group>(null);
+  
+  // Smooth rotation velocity ref to interpolate noisy webcam data
+  const smoothedRotVel = useRef({ x: 0, y: 0 });
 
   // Auto-scale and Setup
   useLayoutEffect(() => {
@@ -50,45 +59,49 @@ const Model: React.FC<{ url: string; controlRef: React.MutableRefObject<ControlR
   }, [scene, url]);
 
   useFrame((state) => {
-    // 1. Rotation and Zoom (Left Hand)
     if (groupRef.current) {
-      const { rotationSpeed, zoomSpeed } = controlRef.current;
+      const { rotationVelocity, zoomSpeed } = controlRef.current;
       
-      // Smooth rotation
-      if (rotationSpeed !== 0) {
-        groupRef.current.rotation.y += rotationSpeed;
+      // Interpolate Rotation Velocity for buttery smooth movement
+      smoothedRotVel.current.x = THREE.MathUtils.lerp(smoothedRotVel.current.x, rotationVelocity.x, 0.2);
+      smoothedRotVel.current.y = THREE.MathUtils.lerp(smoothedRotVel.current.y, rotationVelocity.y, 0.2);
+
+      // Apply rotation
+      if (Math.abs(smoothedRotVel.current.x) > 0.0001 || Math.abs(smoothedRotVel.current.y) > 0.0001) {
+        groupRef.current.rotation.y += smoothedRotVel.current.y; // Yaw
+        groupRef.current.rotation.x += smoothedRotVel.current.x; // Pitch
       }
 
-      // Smooth zoom
+      // Zoom
       if (zoomSpeed !== 0) {
         const currentScale = groupRef.current.scale.x;
-        const newScale = THREE.MathUtils.lerp(currentScale, currentScale + zoomSpeed, 0.2);
-        const clampedScale = Math.max(0.4, Math.min(4.0, newScale));
+        const newScale = THREE.MathUtils.lerp(currentScale, currentScale + zoomSpeed, 0.1);
+        const clampedScale = Math.max(0.4, Math.min(6.0, newScale));
         groupRef.current.scale.set(clampedScale, clampedScale, clampedScale);
       }
       
-      // Gentle idle animation if no input
-      if (rotationSpeed === 0 && !controlRef.current.isDragging) {
-        groupRef.current.rotation.y += Math.sin(state.clock.elapsedTime * 0.5) * 0.001;
+      // Gentle idle animation only if completely idle
+      if (rotationVelocity.x === 0 && rotationVelocity.y === 0 && !controlRef.current.isDragging) {
+         groupRef.current.rotation.y += Math.sin(state.clock.elapsedTime * 0.3) * 0.001;
       }
     }
 
-    // 2. Position Dragging (Right Hand)
+    // Position Dragging
     if (dragGroupRef.current) {
        const { isDragging, panPosition } = controlRef.current;
        
-       // Base vertical offset: -1.2 to keep it grounded and upper body centered
-       const basePosition = new THREE.Vector3(0, -1.2, 0);
-       
        if (isDragging && panPosition) {
           const targetX = panPosition.x;
-          const targetY = -1.2 + panPosition.y;
+          const targetY = -1.2 + panPosition.y; 
           
-          dragGroupRef.current.position.x += (targetX - dragGroupRef.current.position.x) * 0.15;
-          dragGroupRef.current.position.y += (targetY - dragGroupRef.current.position.y) * 0.15;
+          // INCREASED LERP FACTOR: 0.75
+          // Previously 0.4. This makes the visual model "snap" to the hand position much faster.
+          // Since HandController now handles jitter via adaptive smoothing, we can afford a tighter visual coupling.
+          dragGroupRef.current.position.x += (targetX - dragGroupRef.current.position.x) * 0.75;
+          dragGroupRef.current.position.y += (targetY - dragGroupRef.current.position.y) * 0.75;
        } else {
-          // Slowly return toward horizontal center but keep vertical offset
-          dragGroupRef.current.position.x *= 0.95;
+          // Soft return to center when released
+          dragGroupRef.current.position.x += (0 - dragGroupRef.current.position.x) * 0.05;
           dragGroupRef.current.position.y += (-1.2 - dragGroupRef.current.position.y) * 0.05;
        }
     }
@@ -135,8 +148,8 @@ const ModelViewer: React.FC<ModelViewerProps> = ({ modelUrl, controlRef }) => {
             makeDefault 
             enablePan={false}
             enableZoom={true}
-            minPolarAngle={Math.PI / 2.5} 
-            maxPolarAngle={Math.PI / 1.7}
+            minPolarAngle={0} 
+            maxPolarAngle={Math.PI}
           />
         </Suspense>
       </Canvas>

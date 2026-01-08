@@ -1,12 +1,12 @@
 
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { GoogleGenAI } from "@google/genai";
 import { GestureType, MoveDirection, ControlRefs } from './types';
-import { Badge, ProcessingOverlay } from './components/UIComponents';
+import { ProcessingOverlay } from './components/UIComponents';
 import HandController from './components/HandController';
 import ModelViewer from './components/ModelViewer';
 import VoiceController from './components/VoiceController';
-import { Upload, Sparkles, Box, Atom, Dna, Calculator, ChevronDown, MessageSquare } from 'lucide-react';
+import { Upload, Sparkles, Box, Atom, Dna, Calculator, ChevronDown, MessageSquare, Video, Film, Hand, ScanFace, Move3d } from 'lucide-react';
 
 const RECONSTRUCTION_STEPS = [
   "正在提取教具视觉特征...",
@@ -18,6 +18,8 @@ const RECONSTRUCTION_STEPS = [
 
 const App: React.FC = () => {
   const [modelUrl, setModelUrl] = useState<string | null>(null);
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [isVideoMode, setIsVideoMode] = useState(false);
   const [fileName, setFileName] = useState<string>('');
   const [cameraActive, setCameraActive] = useState(true);
   
@@ -31,8 +33,10 @@ const App: React.FC = () => {
   const [directionStatus, setDirectionStatus] = useState<MoveDirection>(MoveDirection.CENTER);
   const [isDragging, setIsDragging] = useState(false);
 
+  // Refs
+  const videoRef = useRef<HTMLVideoElement>(null);
   const controlRef = useRef<ControlRefs>({
-    rotationSpeed: 0,
+    rotationVelocity: { x: 0, y: 0 },
     zoomSpeed: 0,
     panPosition: { x: 0, y: 0 },
     isDragging: false
@@ -40,7 +44,7 @@ const App: React.FC = () => {
 
   const resetControls = () => {
     controlRef.current = { 
-      rotationSpeed: 0, 
+      rotationVelocity: { x: 0, y: 0 }, 
       zoomSpeed: 0,
       panPosition: { x: 0, y: 0 },
       isDragging: false
@@ -55,6 +59,15 @@ const App: React.FC = () => {
       setFileName(file.name);
       resetControls();
       setAiAnalysis(`成功加载本地模型: ${file.name}`);
+    }
+  };
+
+  const handleVideoUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      const url = URL.createObjectURL(file);
+      setVideoUrl(url);
+      setAiAnalysis(`视频已就绪: 双手接触即可播放`);
     }
   };
 
@@ -120,7 +133,30 @@ const App: React.FC = () => {
     setGestureStatus(gesture);
     setDirectionStatus(direction);
     setIsDragging(dragging);
-  }, []);
+
+    const shouldBeVideoMode = gesture === GestureType.DUAL_HAND_CONTACT;
+
+    setIsVideoMode((prev) => {
+      if (prev !== shouldBeVideoMode) {
+        if (shouldBeVideoMode && videoUrl) {
+           setAiAnalysis('视频模式：双手保持接触中');
+        }
+        return shouldBeVideoMode;
+      }
+      return prev;
+    });
+  }, [videoUrl]);
+
+  // Video playback effect
+  useEffect(() => {
+    if (videoRef.current) {
+      if (isVideoMode) {
+        videoRef.current.play().catch(console.error);
+      } else {
+        videoRef.current.pause();
+      }
+    }
+  }, [isVideoMode]);
 
   return (
     <div className="flex flex-col h-screen text-slate-700">
@@ -137,6 +173,18 @@ const App: React.FC = () => {
         </div>
         
         <div className="flex items-center space-x-4">
+          <div className="relative group">
+            <input
+              type="file"
+              accept="video/*"
+              onChange={handleVideoUpload}
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+            />
+            <button className="px-6 py-2 rounded-full glass-panel text-gray-500 hover:text-purple-500 flex items-center transition-all hover:bg-purple-50">
+              <Video className="mr-2" size={18} /> 导入视频
+            </button>
+          </div>
+
           <div className="relative group">
             <input
               type="file"
@@ -191,21 +239,36 @@ const App: React.FC = () => {
           </div>
 
           <div>
-            <h3 className="font-black text-xs text-gray-400 uppercase tracking-[0.2em] mb-4 border-l-4 border-pink-300 pl-3">交互智能控制</h3>
+            <h3 className="font-black text-xs text-gray-400 uppercase tracking-[0.2em] mb-4 border-l-4 border-pink-300 pl-3">全息指令表</h3>
             <div className="space-y-4">
-              <div className="p-4 rounded-2xl bg-white/40 border border-white/50">
-                <p className="text-[10px] font-black text-slate-400 uppercase mb-2">交互绑定</p>
-                <div className="flex flex-col gap-2">
-                   <div className="flex justify-between items-center text-xs">
-                     <span className="font-bold">手势</span>
-                     <span className="text-[#86e3ce]">旋转 + 缩放</span>
+              <div className="p-4 rounded-2xl bg-white/40 border border-white/50 space-y-3">
+                
+                {/* 组合指令 */}
+                <div className="flex items-center gap-2 pb-2 border-b border-white/30">
+                   <div className="p-1.5 bg-indigo-100 rounded-lg"><Move3d size={14} className="text-indigo-400" /></div>
+                   <div className="flex flex-col">
+                     <span className="text-[10px] font-black text-gray-500 uppercase">双人/双手</span>
+                     <span className="text-[9px] text-indigo-500 font-bold">双手接触 (保持) → 视频展示</span>
                    </div>
-                   <div className="flex justify-between items-center text-xs">
-                     <span className="font-bold">语音</span>
-                     <span className="text-pink-400">指令识别 (Gemini)</span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                   <div className="p-1.5 bg-[#86e3ce]/20 rounded-lg"><Hand size={14} className="text-[#86e3ce]" /></div>
+                   <div className="flex flex-col">
+                     <span className="text-[10px] font-black text-gray-500 uppercase">右手 (核心)</span>
+                     <span className="text-[9px] text-gray-400 font-bold">捏合移动 (食指+拇指) → 拖拽</span>
+                   </div>
+                </div>
+                <div className="flex items-center gap-2">
+                   <div className="p-1.5 bg-purple-100 rounded-lg"><ScanFace size={14} className="text-purple-400" /></div>
+                   <div className="flex flex-col">
+                     <span className="text-[10px] font-black text-gray-500 uppercase">左手 (控制)</span>
+                     <span className="text-[9px] text-gray-400 font-bold">张开 → 放大 | 闭合 → 缩小</span>
+                     <span className="text-[9px] text-purple-400 font-bold">双指并拢+滑动 → 控制旋转</span>
                    </div>
                 </div>
               </div>
+              
               <button 
                 onClick={() => setCameraActive(!cameraActive)}
                 className={`w-full py-3 rounded-2xl text-[10px] font-black tracking-widest uppercase border transition-all ${
@@ -242,6 +305,24 @@ const App: React.FC = () => {
             />
           )}
 
+          {/* 视频播放层 */}
+          <div className={`absolute inset-0 z-20 bg-black transition-opacity duration-300 ${isVideoMode ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
+             {videoUrl && (
+               <video 
+                 ref={videoRef}
+                 src={videoUrl} 
+                 className="w-full h-full object-contain"
+                 loop 
+                 controls={false} 
+                 muted
+               />
+             )}
+             <div className="absolute top-6 left-6 px-4 py-2 bg-black/50 backdrop-blur-md rounded-xl text-white/80 text-xs font-bold border border-white/20 flex items-center gap-2">
+               <Film size={14} className="text-purple-400" />
+               视频模式 (分开双手关闭)
+             </div>
+          </div>
+
           {/* 语音智控按钮 */}
           <div className="absolute bottom-6 left-6 z-50">
             <VoiceController 
@@ -257,34 +338,29 @@ const App: React.FC = () => {
             </div>
           </div>
 
-          {modelUrl ? (
-            <ModelViewer modelUrl={modelUrl} controlRef={controlRef} />
-          ) : (
-            <div className="w-full h-full flex flex-col items-center justify-center bg-white/20">
-              <div className="relative mb-8">
-                <div className="absolute inset-0 bg-[#86e3ce]/10 blur-[80px] rounded-full"></div>
-                <div className="relative w-40 h-40 bg-white/80 rounded-[40px] shadow-xl border border-white flex items-center justify-center">
-                   <Box className="text-[#86e3ce] w-20 h-20 animate-spin-slow" strokeWidth={1} />
+          {/* 3D 模型层 */}
+          <div className={`w-full h-full transition-opacity duration-300 ${isVideoMode ? 'opacity-0' : 'opacity-100'}`}>
+            {modelUrl ? (
+              <ModelViewer modelUrl={modelUrl} controlRef={controlRef} />
+            ) : (
+              <div className="w-full h-full flex flex-col items-center justify-center bg-white/20">
+                <div className="relative mb-8">
+                  <div className="absolute inset-0 bg-[#86e3ce]/10 blur-[80px] rounded-full"></div>
+                  <div className="relative w-40 h-40 bg-white/80 rounded-[40px] shadow-xl border border-white flex items-center justify-center">
+                    <Box className="text-[#86e3ce] w-20 h-20 animate-spin-slow" strokeWidth={1} />
+                  </div>
+                </div>
+                <div className="text-center px-8">
+                  <h2 className="text-2xl font-black text-gray-700 mb-2">欢迎来到 3D AI 实验室</h2>
+                  <p className="text-gray-400 text-sm font-medium max-w-[360px] leading-relaxed">
+                    <b>交互指令更新：</b><br/>
+                    右手捏合：拖拽 | 左手双指并拢+滑动：控制旋转<br/>
+                    左手张开/闭合：缩放 | 双手接触：播放视频
+                  </p>
                 </div>
               </div>
-              <div className="text-center px-8">
-                <h2 className="text-2xl font-black text-gray-700 mb-2">欢迎来到 3D AI 实验室</h2>
-                <p className="text-gray-400 text-sm font-medium max-w-[320px] leading-relaxed">
-                  您可以尝试说“请放大模型”或使用手势<br/>来交互探索微观世界的奥秘。
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* 状态浮窗 */}
-          {cameraActive && (
-            <div className="absolute top-6 left-1/2 -translate-x-1/2 z-40 flex gap-1.5 p-1.5 bg-white/80 backdrop-blur-md rounded-full border border-white shadow-sm">
-                <Badge active={gestureStatus === GestureType.OPEN_PALM || controlRef.current.zoomSpeed > 0} label="放大" color="blue" />
-                <Badge active={gestureStatus === GestureType.CLOSED_FIST || controlRef.current.zoomSpeed < 0} label="缩小" color="blue" />
-                <Badge active={directionStatus !== MoveDirection.CENTER || controlRef.current.rotationSpeed !== 0} label="旋转中" color="emerald" />
-                <Badge active={isDragging} label="抓取模型" color="orange" />
-            </div>
-          )}
+            )}
+          </div>
 
           {/* 摄像头预览区 */}
           {cameraActive && (
@@ -306,7 +382,7 @@ const App: React.FC = () => {
               <div className="w-1 h-1 bg-[#86e3ce] rounded-full animate-ping"></div>
               Gemini Live API 已接入
            </span>
-           <span>v2.6.0-VOICE</span>
+           <span>v3.7.0-FINGER-CTRL</span>
         </div>
       </footer>
     </div>

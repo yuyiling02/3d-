@@ -1,7 +1,7 @@
 
 import React, { useRef, Suspense, useLayoutEffect } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { useGLTF, Environment, Center, OrbitControls, ContactShadows } from '@react-three/drei';
+import { useGLTF, Environment, Center, OrbitControls, ContactShadows, Lightformer } from '@react-three/drei';
 import * as THREE from 'three';
 import { ControlRefs } from '../types';
 
@@ -94,9 +94,7 @@ const Model: React.FC<{ url: string; controlRef: React.MutableRefObject<ControlR
           const targetX = panPosition.x;
           const targetY = -1.2 + panPosition.y; 
           
-          // INCREASED LERP FACTOR: 0.75
-          // Previously 0.4. This makes the visual model "snap" to the hand position much faster.
-          // Since HandController now handles jitter via adaptive smoothing, we can afford a tighter visual coupling.
+          // High LERP factor for tight hand tracking
           dragGroupRef.current.position.x += (targetX - dragGroupRef.current.position.x) * 0.75;
           dragGroupRef.current.position.y += (targetY - dragGroupRef.current.position.y) * 0.75;
        } else {
@@ -132,7 +130,14 @@ const ModelViewer: React.FC<ModelViewerProps> = ({ modelUrl, controlRef }) => {
           <spotLight position={[10, 10, 10]} angle={0.15} penumbra={1} intensity={1.5} castShadow />
           <pointLight position={[-10, -10, -10]} intensity={0.5} />
           
-          <Environment preset="studio" blur={0.8} />
+          {/* Procedural Environment to avoid HDR loading errors */}
+          <Environment resolution={256}>
+            <group rotation={[-Math.PI / 4, -Math.PI / 4, 0]}>
+              <Lightformer form="rect" intensity={2} position={[0, 0, 10]} scale={10} />
+              <Lightformer form="rect" intensity={2} position={[0, 5, 5]} scale={10} rotation={[Math.PI / 4, 0, 0]} />
+              <Lightformer form="circle" intensity={1} position={[0, 10, -10]} scale={20} />
+            </group>
+          </Environment>
 
           <Model url={modelUrl} controlRef={controlRef} />
           
